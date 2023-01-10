@@ -610,3 +610,100 @@ class TensorboardVisBackend(BaseVisBackend):
         """close an opened tensorboard object."""
         if hasattr(self, '_tensorboard'):
             self._tensorboard.close()
+
+
+@VISBACKENDS.register_module()
+class DvcliveVisBackend(BaseVisBackend):
+    """Class to log metrics with dvclive.
+    It requires `dvclive`_ to be installed.
+
+    Args:
+        save_dir (str): The root directory to save the files
+            produced by the backend.
+        resume (bool): Whether to resume train. Default: False.
+        report (str, optional): Report format(`None`, `auto`, `html` or
+            `md`). Default: "auto".
+        save_dvc_exp (bool): Whether to save experiment. Default: False.
+
+    .. _dvclive:
+        https://dvc.org/doc/dvclive
+    .. _Live:
+        https://dvc.org/doc/dvclive/api-reference/live#parameters
+    """
+
+    def __init__(self, 
+                 save_dir,
+                 resume: bool = False,
+                 report: Optional[str] = "auto",
+                 save_dvc_exp: bool = False):
+        super().__init__(save_dir)
+        self._resume = resume
+        self._report = report
+        self._save_dvc_exp = save_dvc_exp
+
+    def _init_env(self) -> None:
+        """Setup env for Dvclive."""
+        if not os.path.exists(self._save_dir):
+            os.makedirs(self._save_dir, exist_ok=True)  # type: ignore
+        try:
+            from dvclive import Live
+        except ImportError:
+            raise ImportError(
+                'Please run "pip install dvclive" to install dvclive')
+        self._dvclive = Live(dir=self._save_dir,
+                             resume=self._resume,
+                             report=self._report,
+                             save_dvc_exp=self._save_dvc_exp)
+
+    @property  # type: ignore
+    @force_init_env
+    def experiment(self):
+        """Return Live object."""
+        return self._dvclive
+
+    @force_init_env
+    def add_scalar(self,
+                   name: str,
+                   value: Union[int, float],
+                   step: int = 0,
+                   **kwargs) -> None:
+        """Record the scalar data to live.
+
+        Args:
+            name (str): The scalar identifier.
+            value (int, float): Value to save.
+            step (int): Global step value to record. Default to 0.
+        """
+        if isinstance(value,
+                      (int, float)):
+            self._dvclive.step = step
+            self._dvclive.log_metric(name, value)
+        else:
+            warnings.warn(f'Got {type(value)}, but '
+                          f'int or float are expected. skip it！')
+
+    @force_init_env
+    def add_scalars(self,
+                    scalar_dict: dict,
+                    step: int = 0,
+                    file_path: Optional[str] = None,
+                    **kwargs) -> None:
+        """Record the scalar's data to live.
+
+        Args:
+            scalar_dict (dict): Key-value pair storing the tag and
+                corresponding values.
+            step (int): Global step value to record. Default to 0.
+            file_path (str, optional): Useless parameter. Just for
+                interface unification. Default to None.
+        """
+        assert isinstance(scalar_dict, dict)
+        assert 'step' not in scalar_dict, 'Please set it directly ' \
+                                          'through the step parameter'
+        for key, value in scalar_dict.items():
+            self.add_scalar(key, value, step)
+
+    def close(self):
+        """close an opened live object."""
+        if hasattr(self, '_dvclive'):
+            self._dvclive.end()
